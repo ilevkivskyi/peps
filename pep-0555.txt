@@ -1,0 +1,194 @@
+PEP: 555
+Title: Guidelines for using and interpreting type annotations
+Version: $Revision$
+Last-Modified: $Date$
+Author: everyone is invited
+Status: Draft
+Type: Informational
+Content-Type: text/x-rst
+Created: 06-Sep-2016
+Post-History: 06-Sep-2016
+
+
+Abstract
+========
+
+PEP 484 and PEP 526 introduced syntax for type annotations
+(aka type hints).
+Here we describe how to use those (semantics).
+
+Rationale
+=========
+
+Function annotations appeared in PEP 3107 without any semantics at all.
+Type hints have been introduced in PEP 484 as a preferred use for those.
+A dedicated syntax for variable annotations have been introduced in PEP 526.
+During discussions of PEP 484 and PEP 526 it was decided to specify
+only syntax leaving a more precise description of semantics for later.
+
+There were worries during that discussions, that annotations will
+be heavily misused (making Python a kind of inferior Java).
+In addition, gradual typing, and types in general is a difficult topic
+and dry specifications of previous PEPs are easy to be
+misinterpret by wide community of Python users.
+
+Dedicated guidelines will resolve these two problems.
+
+An itroduction to types
+=======================
+
+More information could be found (good pedagogic reference wanted!)
+
+Static vs dynamic typing
+------------------------
+
+
+Nominal vs structural subtyping
+-------------------------------
+
+
+Mental model for Python runtime
+-------------------------------
+
+Names refer to objects
+
+class/module scope vs function/method scope
+
+"API specification" vs local types.
+
+More technical documentation on this could be found in
+Data model and Execution model
+
+A good blog post about this 
+http://nedbatchelder.com/text/names.html
+
+
+Note on static types vs runtime classes
+---------------------------------------
+
+
+An introduction to gradual typing in Python
+===========================================
+
+Best of both worlds
+
+
+How it is realised?
+-------------------
+
+More information could be found in PEP 483.
+A good blog post on this
+http://wphomes.soic.indiana.edu/jsiek/what-is-gradual-typing/
+
+
+Some type building blocks
+-------------------------
+
+More information in PEP 484
+
+
+Type variables
+--------------
+
+
+Generic functions and classes
+-----------------------------
+
+(No covariance or other difficult stuff here).
+
+
+Meaning of type hints
+=====================
+
+A general description here.
+
+Different kinds of 3rd party tools:
+Checkers, inferencers, linters etc.
+
+
+Function annotations
+--------------------
+
+
+Variable annotations in functions/methods
+-----------------------------------------
+
+
+
+Variable annotations in classes/modules
+---------------------------------------
+
+
+What a good type checker should allow
+-------------------------------------
+
+def inc_x():
+    x: Optional[int] = complicated_fun()
+    if x is None:
+        print('Not a chance!')
+    else:
+        x += 1
+
+What a good type checker should prohibit
+----------------------------------------
+
+Prohibit always:
+
+- 1 < 'abc'
+- x: int = 'abc'
+
+Prohibit always or have a mode for prohibiting this:
+
+
+
+How to use type hints
+=====================
+
+General style guidelines.
+
+Naming conventions for type variables
+could be found in PEP 8.
+
+
+Good reasons to have type hints
+-------------------------------
+
+- Big projects
+
+- Documenting non-obvious choices::
+
+    open_file = func()  # is it a file name or descriptor?
+
+    open_file: str = func() # this does not require comments
+
+In general type hints is an advanced topic, if you are
+thinking whether you need them, them probably you don't.
+
+
+How much function annotations to use
+------------------------------------
+
+
+How much variable annotations to use
+------------------------------------
+
+
+Annotating attributes in class body vs method bodies
+----------------------------------------------------
+
+
+Copyright
+=========
+
+This document has been placed in the public domain.
+
+
+
+..
+   Local Variables:
+   mode: indented-text
+   indent-tabs-mode: nil
+   sentence-end-double-space: t
+   fill-column: 70
+   coding: utf-8
+   End:
