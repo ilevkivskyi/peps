@@ -66,6 +66,37 @@ http://nedbatchelder.com/text/names.html
 Note on static types vs runtime classes
 ---------------------------------------
 
+Note that PEP 484 makes a distinction between types and classes.
+
+In Python, classes are object factories defined by the class statement,
+and returned by the ``type()`` built-in function. Class is a dynamic,
+runtime concept.
+
+Type concept is described above, types appear in variable and function
+type annotations, can be constructed from building blocks described below,
+and are used by static type checkers. 
+
+Every class is a type as discussed above. But it is tricky and error prone
+to implement a class that exactly represents semantics of a given type.
+The static types described in PEP 484, should not be confused with the
+runtime classes. Examples:
+
+- int is a class and a type.
+
+- UserID is a class and a type.
+
+- Union[str, int] is a type but not a proper class::
+
+    Union[str, int]()                    # instantiation has not much meaning
+
+    class MyUnion(Union[str, int]): ...  # and subclassing as well
+
+To clarify, there is single class hierarchy at runtime (everything is
+object at runtime and every ``type(obj)`` is a class), these are not
+Python 2 classes vs types. This is just an important part of mental model
+that allows to avoid confusions: Classes are for code reuse, types are
+for debugging/documentation.
+
 
 An introduction to gradual typing in Python
 ===========================================
@@ -94,16 +125,27 @@ Type variables
 Generic functions and classes
 -----------------------------
 
-(No covariance or other difficult stuff here).
+(No covariance or other difficult stuff here, maybe
+just two-three sentences about covariance vs invariance).
 
 
 Meaning of type hints
 =====================
 
-A general description here.
-
 Different kinds of 3rd party tools:
 Checkers, inferencers, linters etc.
+
+General principles of type hints in Python:
+
+- type hints constrain target bindings during type checking: the expression
+  being bound must conform to the annotation of the target (whether
+  that target is a variable name, an attribute, a function parameter,
+  or a function return value). TODO: Examples
+- the binding constraint means type hints allow inference engines to assume
+  that the type hint is correct, even when the specific expressions bound
+  are unavailable during static analysis (as is the case for function
+  parameter binding and assignments to public class and instance attributes)
+- Etc
 
 
 Function annotations
@@ -122,33 +164,47 @@ Variable annotations in classes/modules
 What a good type checker should allow
 -------------------------------------
 
-def inc_x():
-    x: Optional[int] = complicated_fun()
-    if x is None:
-        print('Not a chance!')
-    else:
-        x += 1
+Example::
+
+  def inc_x():
+      x: Optional[int] = complicated_fun()
+      if x is None:
+          print('Not a chance!')
+      else:
+          x += 1
 
 What a good type checker should prohibit
 ----------------------------------------
 
 Prohibit always:
 
-- 1 < 'abc'
-- x: int = 'abc'
+- Violations of type signatures of fucntions ``1 < 'abc'``
+- Non-intersecting types ``x: int = 'abc'``
 
 Prohibit always or have a mode for prohibiting this:
-
 
 
 How to use type hints
 =====================
 
-General style guidelines.
+General style guidelines, normaly, PEP 8 applies.
 
-Naming conventions for type variables
-could be found in PEP 8.
+Details of naming conventions for type variables
+could also be found in PEP 8.
 
+Public libraries vs private code...
+
+Type hints are not intended to replace documentation.
+A good docstring is still a nice thing to have. Example::
+
+  def analize(data: List[str], level: int = 1) -> List[str]:
+      """
+      Dispatches analisys methods for text snippets.
+      This is an expensive function if run with level > 2
+      """
+
+A critical blog post on this
+https://www.grinchcentral.com/why-types-are-not-documentation
 
 Good reasons to have type hints
 -------------------------------
@@ -165,16 +221,96 @@ In general type hints is an advanced topic, if you are
 thinking whether you need them, them probably you don't.
 
 
-How much function annotations to use
-------------------------------------
+Using function annotations
+--------------------------
+
+It is recommended that all parameters as an annotated function
+are annotated::
+
+  def fun(me: str, others: str) -> Fun: # Good
+      ...
+
+  def fun(me, others: str) -> Fun:      # OK
+      ...
+
+  def fun(me, others):                  # Also good
+      ...
+
+Use the most specific type for return values, and more general type
+for parameters::
+
+  def simplify(data: Sequence[Real]) -> Tuple[float, ...]:
+      ...
 
 
-How much variable annotations to use
-------------------------------------
+Using variable annotations
+--------------------------
 
 
 Annotating attributes in class body vs method bodies
 ----------------------------------------------------
+
+
+Using type aliases and type variables
+-------------------------------------
+
+Use short CapWord names or single uppercase letters for type
+variables ``S``, ``T``, ``Num``.
+
+Details of naming conventions for type variables
+could also be found in PEP 8.
+
+Reuse type variables, it is not necessary to introduce a new variable
+for every function/class. Type checker will know that ``T`` in these
+two functions could be different::
+
+  def truncate(data: Sequence[T]) -> List[T]:
+      ...
+  def duplicate(data: T) -> Tuple[T, T]:
+      ...
+
+It preferred that type variables inteneded for a general use are defined
+a the top of module after imports. typing.py provides few
+type variables -- reuse those.
+
+Specialized type variables that are used few types could be defined
+at the place of their first use::
+
+  AT = TypeVar('AT', boundary='Analyzer', covariant=True)
+  class Analyzer(Generic[AT]):
+      def post_analyzer(self) -> AT:
+          ...
+
+It is preferred that type aliases have longer, explanatory names::
+
+  PluginLib = MutableMapping[str, Sequence[Plugin]]
+  SymbolTable = Tuple[Dict[str, Any], ...]
+
+  LoggersT = List[Callable[[int, T], int]]
+  def proces_with_logging(data: List[T], loggers: LoggersT):
+      ...
+
+The same logic as for type variables applies here: widely used at top
+of module, specific at place of first use.
+
+It is good to use an explanative type alias to demostrate intent even for
+simple types::
+
+  Salaries = List[Decimal]
+  URL = str
+
+Safer approach for proper classes taht could be verified by a type
+checker is to use distinct types::
+
+  UserId = NewType('UserId', int)
+  StorageId = NewType('StorageId', int)
+
+  id = UserId(something)
+  sid = StorageId(0)
+
+  # 1000 lines later
+
+  new_storage: StorageId = id # Flagged as error
 
 
 Copyright
