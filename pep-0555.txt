@@ -209,13 +209,25 @@ https://www.grinchcentral.com/why-types-are-not-documentation
 Good reasons to have type hints
 -------------------------------
 
-- Big projects
+For interactive-use-only code, code written for learning purposes,
+personal automation, ad hoc data analysis, etc., typechecking
+is generally not needed. For most other applications, an automated
+regression test suite will do a good job. Type annotations become usefull
+at large scales when other methods of maintaining code quality
+become insufficient::
 
-- Documenting non-obvious choices::
+- combinatorial explosions make it impossible to test all code
+  path combinations
+- integrating multiple projects together makes difficult to trace the cause
+  of runtime test failures
+- engaging in large scale automated refactoring requires to be confident
+  that the result is sensible
+- type inference without annotations becomes problematic for complex code
+- documenting non-obvious choices in large code bases becomes important::
 
-    open_file = func()  # is it a file name or descriptor?
+    open_file = complex_exprssion  # is it a file name or descriptor?
 
-    open_file: str = func() # this does not require comments
+    open_file: str = copmlex_expression # this does not require comments
 
 In general type hints is an advanced topic, if you are
 thinking whether you need them, them probably you don't.
