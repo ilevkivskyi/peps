@@ -15,19 +15,9 @@ Resolution:
 Abstract
 ========
 
-...
 
-
-Motivation
-==========
-
-...
-
-
-Rationale
-=========
-
-...
+Rationale and Goals
+===================
 
 
 Syntax and Semantics
