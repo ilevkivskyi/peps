@@ -30,10 +30,90 @@ Rationale
 ...
 
 
-Specification
-=============
+Syntax and Semantics
+====================
 
-...
+Match arms
+----------
+
+This will be statement, not expression.
+
+There can be more than one arm per block
+
+Match semantics
+---------------
+
+First in chain of ``if ... elif ... elif ...``
+
+Note: this this not a switch statement.
+
+
+Allowed patterns
+----------------
+
+
+Class patterns
+--------------
+
+
+Guards
+------
+
+
+Matching names
+--------------
+
+
+Named sub-matches
+-----------------
+
+
+Keyword shorthand
+-----------------
+
+
+Ad-hoc matches
+--------------
+
+Python is pragmatic -> ad-hoc special-casing
+
+
+Runtime specification
+=====================
+
+The ``__match__()`` protocol
+----------------------------
+
+
+Impossible matches
+-------------------
+
+
+Default ``object.__match__()``
+------------------------------
+
+
+Dataclasses
+-----------
+
+
+Builtins and standard library
+-----------------------------
+
+
+Static checkers specification
+=============================
+
+Exhaustiveness checks
+---------------------
+
+
+Sealed classes as ADTs
+----------------------
+
+
+Type erasure
+------------
 
 
 Backwards Compatibility
