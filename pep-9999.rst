@@ -1,0 +1,74 @@
+PEP: 9999
+Title: Pattern matching
+Version: $Revision$
+Last-Modified: $Date$
+Author: Ivan Levkivskyi <levkivskyi at gmail.com>
+BDFL-Delegate:
+Discussions-To: Python-Dev <python-dev@python.org>
+Status: Draft
+Type: Standards Track
+Content-Type: text/x-rst
+Created: 2020-05-04
+Python version: 3.10
+Resolution:
+
+Abstract
+========
+
+...
+
+
+Motivation
+==========
+
+...
+
+
+Rationale
+=========
+
+...
+
+
+Specification
+=============
+
+...
+
+
+Backwards Compatibility
+=======================
+
+This PEP is fully backwards compatible.
+
+
+Reference Implementation
+========================
+
+None yet.
+
+
+Rejected Ideas
+==============
+
+
+References
+==========
+
+
+Copyright
+=========
+
+This document is placed in the public domain or under the
+CC0-1.0-Universal license, whichever is more permissive.
+
+
+
+..
+   Local Variables:
+   mode: indented-text
+   indent-tabs-mode: nil
+   sentence-end-double-space: t
+   fill-column: 70
+   coding: utf-8
+   End:
