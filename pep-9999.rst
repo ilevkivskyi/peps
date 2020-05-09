@@ -35,7 +35,7 @@ Let us start from some anecdotal evidence: ``isinstance()`` is one of the most
 called functions in large scale Python code-bases by static call count.
 In particular, when analyzing some multi-million line production code base,
 it was discovered that ``isinstance()`` is the second mast called builtin
-function (after ``len()``). Even if taking into account builtin classes, it is
+function (after ``len()``). Even taking into account builtin classes, it is
 still in the top ten.
 
 There are two possible conclusions that can be made from this information:
@@ -136,20 +136,71 @@ Syntax and Semantics
 Match arms
 ----------
 
-This will be statement, not expression.
+A simplified pseudo-grammar for the proposed syntax is::
 
-There can be more than one arm per block
+    Match = "match" Expression ":" (("as" Pattern ":")+ Suite)+ ["else:" Suite]
+
+We propose the match syntax to be a statement, not expression. Although in
+many languages it is an expression, being a statement better suites the general
+logic of Python syntax. See `rejected ideas`_ for more discussion. The list of
+allowed patterns is specified below in the `patterns`_ subsection.
+
+The ``match`` word is proposed to be a soft keyword, so that it is recognized
+as a keyword at the beginning of match statement, but is allowed to be used in
+other positions as a variable or argument name.
+
+Note that there can be more than one match arm per match suite. The proposed
+indentation structure is as following::
+
+    match some_expression:
+    as pattern_1a:
+    as pattern_1b:
+        ...
+    as pattern_2:
+        ...
+    else:
+        ...
+
+Such layout saves an indentation level and matches a common indentation scheme
+for ``switch`` statement in C language. Although this may be tricky for some
+simple-minded editors, it should be not hard to support in principle, one just
+needs to not add indentation level after a colon if the previous line starts
+with ``match``.
+
 
 Match semantics
 ---------------
 
-First in chain of ``if ... elif ... elif ...``
+The proposed large scale semantics for choosing the match is to choose first
+matching pattern and and execute the corresponding suite. The remaining
+patterns are not tried. If there are no matching pattens, the ``else`` clause
+is executed. If the latter is absent, an instance of ``UnmatchedValue``
+(proposed to be a subclass of ``ValueError``) is raised.
 
-Note: this this not a switch statement.
+Essentially this is equivalent to a chain of ``if ... elif ... else`` except
+the default ``else`` clause is to raise an exception. Note that unlike for
+``switch`` statement, the pre-computed dispatch dictionary semantics does not
+apply here.
 
+Name bindings made during successful pattern match outlive the executed suite
+and can be used after the match statement. This follows the logic of other
+Python statements that can bind names, such as ``for`` loop and ``with``
+statement. For example::
+
+  match shape:
+  as Point(x, y):
+      ...
+  as Rectangle(x, y, _x, _y):
+      ...
+  print(x, y)  # This works
+
+
+.. _patterns:
 
 Allowed patterns
 ----------------
+
+Literal match and constant match use equality with constant on the r.h.s.
 
 
 Class patterns
@@ -159,10 +210,12 @@ Class patterns
 Guards
 ------
 
+Name is bound after guard succeed.
 
 Matching names
 --------------
 
+Compared by chained (not pairwise) equality.
 
 Named sub-matches
 -----------------
@@ -228,6 +281,8 @@ Reference Implementation
 None yet.
 
 
+.. _rejected ideas:
+
 Rejected Ideas
 ==============
 
@@ -245,6 +300,12 @@ Make it an expression
 ---------------------
 
 No, because it is inconsistent with other things in Python
+
+
+Use a nested indentation scheme
+-------------------------------
+
+No, because it can be really long for nested match statements.
 
 
 Use ``or`` to combine matches
