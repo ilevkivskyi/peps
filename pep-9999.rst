@@ -15,24 +15,120 @@ Resolution:
 Abstract
 ========
 
-This PEP proposes to add pattern match statements to Python. This will
+This PEP proposes to add pattern matching statements [1]_ to Python. This will
 allow more readable and reliable code when dealing with well structured
 heterogeneous data. The PEP contains syntax specification, runtime
-specification, and recommended specification for static type checkers and
-similar tools.
+specification, and recommended specification for static type checkers.
 
 Previously PEP 275 and PEP 3101 that proposed similar constructs were
 rejected. Here we take a different approach and focus on generalizing
-iterable and dictionary unpacking instead of optimizing (or syntax-sugaring)
+iterable and dictionary unpacking instead just syntax-sugaring and optimizing
 ``if ... elif ... else`` statement. Also, recently implemented PEP 617
-introduced a new PEG parser for Python that allows more flexible syntactic
+introduced a new PEG parser for Python now allows more flexible syntactic
 options.
 
 
 Rationale and Goals
 ===================
 
+Let us start from some anecdotal evidence: ``isinstance()`` is one of the most
+called functions in large scale Python code-bases by static call count.
+In particular, when analyzing some multi-million line production code base,
+it was discovered that ``isinstance()`` is the second mast called builtin
+function (after ``len()``). Even if taking into account builtin classes, it is
+still in the top ten.
 
+There are two possible conclusions that can be made from this information:
+
+* Handling of heterogeneous data (i.e. situations where a variable can take
+  values of multiple types) is common in real world code.
+
+* Python doesn't have expressive ways of destructuring data (i.e. separating
+  the content of an object into multiple variables).
+
+This is in contrast with the opposite sides of both aspects:
+
+* Its success in the numeric world indicates that Python is good when
+  working with homogeneous data. It also has builtin support for homogeneous
+  data structures such as e.g. lists and arrays, and semantic constructs such
+  as iterators and generators.
+
+* Python is expressive and flexible at constructing object. It has syntactic
+  support for collection literals and comprehensions. Custom objects can be
+  created using positional and keyword calls that are customized by special
+  ``__init__()`` method.
+
+This PEP aims at improving the support for destructuring heterogeneous data
+by adding a dedicated syntactic support for it in the form of pattern matching.
+On very high level it is similar to regular expressions, but instead of
+matching string, it will be possible to match arbitrary Python objects.
+
+We believe this will improve both readability and reliability of relevant code.
+To illustrate the readability improvement, let us consider an actual example
+from the Python standard library::
+
+  def is_tuple(node):
+      if isinstance(node, Node) and node.children == [LParen(), RParen()]:
+          return True
+      return (isinstance(node, Node)
+              and len(node.children) == 3
+              and isinstance(node.children[0], Leaf)
+              and isinstance(node.children[1], Node)
+              and isinstance(node.children[2], Leaf)
+              and node.children[0].value == "("
+              and node.children[2].value == ")")
+
+With the syntax proposed in this PEP it can be rewritten as below. Note that
+the proposed code will work without any modifications to the definition of
+``Node`` and other classes here::
+
+  def is_tuple(node: Node) -> bool:
+      match node:
+      as Node(children=[LParen(), RParen()]):
+      as Node(children=[Leaf(value="("), Node(...), Leaf(value=")")]):
+          return True
+      else:
+          return False
+
+See the `syntax`_ sections below for a more detailed specification. From
+the reliability perspective, experience shows that missing a case when dealing
+with a set of possible data values leads to hard to debug issues, thus forcing
+people to add safety asserts like this::
+
+  def get_first(data: Union[int, List[int]]) -> int:
+      if isinstance(data, list) and data:
+          return data[0]
+      elif isinstance(data, int):
+          return data
+      else:
+          assert False, "should never get here"
+
+With the proposed pattern matching such exhaustiveness checks will be added
+automatically.
+
+Similar to how constructing objects can be customized by user defined
+``__init__()`` method, we propose that destructuring objects can be customized
+by a new special ``__match__()`` method. As part of this PEP we specify the
+builtin implementations for ``object.__match__()``, for builtin collections
+such as ``tuple``, ``list``, ``dict``, and ``set``, and for auto-generated
+flexible ``__match__()`` method for PEP 557 dataclasses. See `runtime`_
+section below.
+
+Finally, we aim to provide a comprehensive support for static type checkers
+and similar tools. For this purpose we propose to introduce a
+``@typing.sealed`` class decorator that will be idempotent at runtime, but
+will indicate to static tools that all subclasses of this class must be defined
+in the same module. This will allow effective static exhaustiveness checks,
+and together with dataclasses, will provide a nice support for algebraic data
+types [2]_. See `static checkers`_ section for more details.
+
+In general, we believe that pattern matching proved to be a useful and
+expressive tool in various modern languages. In particular, some aspects of
+this PEP were inspired by how pattern matches work in Rust [3]_ and
+Scala [4]_.
+
+
+.. _syntax:
 
 Syntax and Semantics
 ====================
@@ -72,15 +168,13 @@ Named sub-matches
 -----------------
 
 
-Keyword shorthand
------------------
-
-
 Ad-hoc matches
 --------------
 
 Python is pragmatic -> ad-hoc special-casing
 
+
+.. _runtime:
 
 Runtime specification
 =====================
@@ -104,6 +198,8 @@ Dataclasses
 Builtins and standard library
 -----------------------------
 
+
+.. _static checkers:
 
 Static checkers specification
 =============================
@@ -138,16 +234,18 @@ Rejected Ideas
 Use a hard keyword
 ------------------
 
-No, because:
+Although it would significantly simplify life for simple No, because:
 
 * The new parser doesn't require us to do this.
 
 * ``match`` is so commonly used in existing code
 
+
 Make it an expression
 ---------------------
 
 No, because it is inconsistent with other things in Python
+
 
 Use ``or`` to combine matches
 -----------------------------
@@ -160,15 +258,19 @@ No, because:
 
 * Using multiple arms is not uncommon in other languages.
 
+
 Make read semantics for names the default
 -----------------------------------------
 
 No, because common case should be the default.
 
+
 Use dispatch dict semantics for matches
 ---------------------------------------
 
-Because it may be very tricky if possible at all (unlike for switch statement).
+Because it may be very tricky if possible at all (unlike for switch
+statement).
+
 
 Allow fall through without a match
 ----------------------------------
@@ -181,11 +283,13 @@ No, because:
 
 * Use ad-hoc matches for special cases.
 
+
 Allow ``elif match`` statements
 -------------------------------
 
 No, because there should be only one way to do it. If people will ask about
 this, we can always reconsider later.
+
 
 Allow arbitrary expressions in reference matches
 ------------------------------------------------
@@ -196,8 +300,9 @@ No, because:
 
 * Keep it clean/simple
 
-* The meaning of a pattern is primarily left hand side (like for iterable unpacking),
-  let us keep it that way.
+* The meaning of a pattern is primarily left hand side (like for iterable
+  unpacking), let us keep it that way.
+
 
 Use ``__getitem__()`` and ``__getstate__()`` as fallback
 --------------------------------------------------------
@@ -208,14 +313,42 @@ No, because:
 
 * Inconsistent with current way unpacking works.
 
+
 Ignore underscores in coinciding name match
 -------------------------------------------
 
-No, because this is subtle and may be unexpected, instead use ``_1``, ``_2`` etc.
+No, because this is subtle and may be unexpected, instead use ``_1``, ``_2``
+etc.
+
+
+Implement builtin support for matches on ``frozenset``
+------------------------------------------------------
+
+No, because supporting this may require complicating the basic
+syntax/semantics and this will be probably used very rarely. We can
+reconsider if people will actually ask about this.
 
 
 References
 ==========
+
+.. [1]
+   https://en.wikipedia.org/wiki/Pattern_matching
+
+.. [2]
+   https://en.wikipedia.org/wiki/Algebraic_data_type
+
+.. [3]
+   https://doc.rust-lang.org/reference/patterns.html
+
+.. [4]
+   https://docs.scala-lang.org/tour/pattern-matching.html
+
+.. [5]
+   https://docs.python.org/3/library/dataclasses.html
+
+.. [6]
+   https://docs.python.org/3/library/typing.html
 
 
 Copyright
