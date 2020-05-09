@@ -121,6 +121,84 @@ None yet.
 Rejected Ideas
 ==============
 
+Use a hard keyword
+------------------
+
+No, because:
+
+* The new parser doesn't require us to do this.
+
+* ``match`` is so commonly used in existing code
+
+Make it an expression
+---------------------
+
+No, because it is inconsistent with other things in Python
+
+Use ``or`` to combine matches
+-----------------------------
+
+No, because:
+
+* Can cause ambiguity with guards, also with other operators like ``|``.
+
+* In real life it will be anyway split over multiple lines.
+
+* Using multiple arms is not uncommon in other languages.
+
+Make read semantics for names the default
+-----------------------------------------
+
+No, because common case should be the default.
+
+Use dispatch dict semantics for matches
+---------------------------------------
+
+Because it may be very tricky if possible at all (unlike for switch statement).
+
+Allow fall through without a match
+----------------------------------
+
+No, because:
+
+* This can cause subtle bugs.
+
+* It is easy to add an ``else`` match arm.
+
+* Use ad-hoc matches for special cases.
+
+Allow ``elif match`` statements
+-------------------------------
+
+No, because there should be only one way to do it. If people will ask about
+this, we can always reconsider later.
+
+Allow arbitrary expressions in reference matches
+------------------------------------------------
+
+No, because:
+
+* May be syntactically tricky
+
+* Keep it clean/simple
+
+* The meaning of a pattern is primarily left hand side (like for iterable unpacking),
+  let us keep it that way.
+
+Use ``__getitem__()`` and ``__getstate__()`` as fallback
+--------------------------------------------------------
+
+No, because:
+
+* May be surprising.
+
+* Inconsistent with current way unpacking works.
+
+Ignore underscores in coinciding name match
+-------------------------------------------
+
+No, because this is subtle and may be unexpected, instead use ``_1``, ``_2`` etc.
+
 
 References
 ==========
