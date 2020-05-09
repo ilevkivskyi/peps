@@ -200,31 +200,138 @@ statement. For example::
 Allowed patterns
 ----------------
 
-Literal match and constant match use equality with constant on the r.h.s.
+The following patterns are supported:
 
+* Literal pattern, i.e. a simple literal like a string, a number, boolean,
+  or None::
 
-Class patterns
---------------
+    match number:
+    as 1:
+        print("Just one")
+    as 2:
+        print("A couple")
+    else:
+        print("Many")
+
+  Literal pattern uses equality with literal on the right hand side, so that
+  in the above example ``number == 1`` and then possibly ``number == 2`` will
+  be evaluated.
+
+* Name pattern, that serves as an assignment target for the matched
+  expression::
+
+  match greeting:
+  as None:
+      print("Hello!")
+  as name:
+      print(f"Hi {name}!")
+
+* Display pattern is a generalization of iterable unpacking but supports all
+  builtin collections: tuples, lists, dictionaries, and sets. Each element
+  can be an arbitrary pattern plus there may be at most one ``*name`` or
+  ``**name`` pattern to catch all remaining elements::
+
+    match collection:
+    as (1, x, *other):
+        print("Got tuple")
+    as [1, [x, *other]]:
+        print("Got nested list")
+    as {1: x, **other}:
+        print("Got dictionary")
+    else:
+        print("Probably a set")
+
+  For dictionaries and sets the order of items is ignored, so e.g. the result
+  of matching ``{1, 2}`` against ``{x, y}`` is unpredictable, but the latter
+  will only match a set with two elements. Under the hood these matches will
+  use the ``__match__()`` protocol as specified in `runtime`_ section.
+
+* Unstructured class pattern is a synonym for an ``isinstance()`` check, it is
+  mostly useful in nested positions, when the content of the object is not
+  important and it serves just as a marker. For example::
+
+    match shapes:
+    as [Point(...), second, third, *other]:
+        print(f"Hm, the first one is point, then {second} and {third}")
+
+* Structured class pattern supports two possible ways of matching: by position
+  like ``Point(x, y)``, and by name like ``User(id=id, name=name)``. These two
+  can be combined, but positional match cannot follow a match by name. Each
+  item in a class match can be an arbitrary pattern, plus at most one ``*name``
+  or ``**name`` pattern can be present. Semantics of the class pattern is an
+  ``isinstance()`` call plus a ``__match__()`` call on the class if the former
+  returns ``True``. For example::
+
+    match shape:
+    as Point(x, y):
+        ...
+    as Rectangle(*coordinates, painted=True):
+        ...
+
+  This PEP only fully specifies the behavior ``__match__()``
+  for builtins and dataclasses, custom classes are only required to follow
+  protocol specified in `runtime`_ section. After all, the authors of a class
+  know best how to "revert" the logic of the ``__init__()`` they wrote. The
+  runtime will then chain these calls to allow matching against arbitrarily
+  nested patterns.
 
 
 Guards
 ------
 
-Name is bound after guard succeed.
+Name is bound after guard succeed. Needed in particular because we
+don't have constants.
+
 
 Matching names
 --------------
 
-Compared by chained (not pairwise) equality.
+Compared by chained (not pairwise) equality for every group.
 
-Named sub-matches
------------------
+Named sub-patterns
+------------------
+
+For example::
+
+  match get_shape():
+  as Line(point := Point(x, y), point):
+      print(f"Zero length line at {x}, {y}")
+
+Another example::
+
+  match group_shapes():
+  as ([], [point := Point(x, y), *other]):
+      print(f"Got {point} in the second group")
+      ...
 
 
 Ad-hoc matches
 --------------
 
-Python is pragmatic -> ad-hoc special-casing
+Python is pragmatic -> ad-hoc special-casing::
+
+  if isinstance(node, CallExpr):
+      if (isinstance(node.callee, NameExpr) and len(node.args) == 1 and
+              isinstance(node.args[0], NameExpr)):
+          call = node.callee.name
+          arg = node.args[0].name
+          ...  # Continue special-casing
+  ...  # Follow with generic code
+
+This can be rewritten as::
+
+  if match node as CallExpr(callee=NameExpr(name=call), args=[NameExpr(name=arg)]):
+      ...  # Continue special-casing
+  ...  # Follow with generic code
+
+
+Important: no guards. Similar for ``while match``::
+
+  def get_next_data() -> Union[Chunk, Timeout]:
+      ...
+
+  while match get_next_data() as Chunk(data, checksum=0):
+      ...  # Do stuff with data
 
 
 .. _runtime:
@@ -248,8 +355,8 @@ Dataclasses
 -----------
 
 
-Builtins and standard library
------------------------------
+Builtin classes
+---------------
 
 
 .. _static checkers:
@@ -269,6 +376,10 @@ Type erasure
 ------------
 
 
+Note about constants
+--------------------
+
+
 Backwards Compatibility
 =======================
 
@@ -286,6 +397,18 @@ None yet.
 Rejected Ideas
 ==============
 
+Just allow a more flexible assignment targets
+---------------------------------------------
+
+No, because it is not what is commonly needed, people want an ``if``.
+
+
+Make it an expression
+---------------------
+
+No, because it is inconsistent with other things in Python
+
+
 Use a hard keyword
 ------------------
 
@@ -294,12 +417,6 @@ Although it would significantly simplify life for simple No, because:
 * The new parser doesn't require us to do this.
 
 * ``match`` is so commonly used in existing code
-
-
-Make it an expression
----------------------
-
-No, because it is inconsistent with other things in Python
 
 
 Use a nested indentation scheme
@@ -320,10 +437,10 @@ No, because:
 * Using multiple arms is not uncommon in other languages.
 
 
-Make read semantics for names the default
------------------------------------------
+Support constant pattern
+------------------------
 
-No, because common case should be the default.
+No, because it is too ambiguous. Also use ``if x == BLACK: ...``.
 
 
 Use dispatch dict semantics for matches
