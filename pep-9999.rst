@@ -111,9 +111,9 @@ Similarly to how constructing objects can be customized by a user-defined
 ``__init__()`` method, we propose that destructuring objects can be customized
 by a new special ``__match__()`` method. As part of this PEP we specify the
 builtin implementation for ``object.__match__()``, match behavior for builtin
-collections such as ``tuple``, ``list``, ``dict``, and ``set``, and for
-auto-generated flexible ``__match__()`` method for PEP 557 dataclasses. See
-`runtime`_ section below.
+collections such as ``tuple``, ``list``, and ``dict``, and for auto-generated
+flexible ``__match__()`` method for PEP 557 dataclasses. See `runtime`_
+section below.
 
 Finally, we aim to provide a comprehensive support for static type checkers
 and similar tools. For this purpose we propose to introduce a
@@ -234,8 +234,8 @@ building blocks. The following patterns are supported:
   the above snippet will raise ``UnboundLocalError`` rather than ``NameError``
   if the ``None`` match arm was taken.
 
-* Display pattern is a generalization of iterable unpacking but supports all
-  builtin collections: tuples, lists, dictionaries, and sets. Each element
+* Display pattern is a generalization of iterable unpacking and supports
+  builtin collections: tuples, lists, and dictionaries. Each element
   can be an arbitrary pattern plus there may be at most one ``*name`` or
   ``**name`` pattern to catch all remaining items::
 
@@ -249,11 +249,11 @@ building blocks. The following patterns are supported:
     else:
         print("Probably a set")
 
-  For dictionaries and sets the order of items is ignored, so e.g. the result
-  of matching ``{1, 2}`` against ``{x, y}`` is unpredictable, but the latter
-  will only match a set with two elements, for dictionaries only name pattern
-  and literal pattern are allowed in the key position, see details in the
-  `runtime`_ section.
+  For dictionaries the order of items is ignored, so e.g. the result of
+  matching ``{1: 2, 3: 4}`` against ``{k1: v1, k2: v2}`` is unpredictable, but
+  the latter will only match a dictionary with two items. Only name pattern
+  and literal pattern are allowed in the key position, and the ``**other`` item
+  must always be last, see details in the `runtime`_ section.
 
 * Unstructured class pattern is a synonym for an ``isinstance()`` check, it is
   mostly useful in nested positions, when the content of the object is not
@@ -267,9 +267,9 @@ building blocks. The following patterns are supported:
   like ``Point(x, y)``, and by name like ``User(id=id, name=name)``. These two
   can be combined, but positional match cannot follow a match by name. Each
   item in a class match can be an arbitrary pattern, plus at most one ``*name``
-  or ``**name`` pattern can be present. Semantics of the class pattern is an
-  ``isinstance()`` call plus a ``__match__()`` call on the class if the former
-  returns ``True``. For example::
+  or ``**name`` pattern can be present (the former may be not last). Semantics
+  of the class pattern is an ``isinstance()`` call plus a ``__match__()`` call
+  on the class if the former returns ``True``. For example::
 
     match shape:
     as Point(x, y):
@@ -461,8 +461,8 @@ signature::
       value: object,
       pos: PosData,
       named: NamedData,
-      star_pos: bool = False,
-      star_named: bool = False,
+      star_position: int = -1,
+      star_named_present: bool = False,
   ) -> Union[NotImplemented, MatchData]:
       ...
 
@@ -474,8 +474,8 @@ then makes the following call::
       value,
       pos_vales,
       named_values,
-      is_star_pos_present,
-      is_star_named_present,
+      star_position,
+      star_named_present,
   )
 
 In ``pos_values`` every sub-pattern is represented by an ``Ellipsis`` object,
@@ -494,7 +494,7 @@ match arm will trigger the following call::
       shape,
       (0, ..., ...),
       {"painted": True, "visible": ...},
-      False,
+      -1,
       True,
   )
 
@@ -623,8 +623,8 @@ Builtin classes
 Builtin collections will be special-cased instead of using ``__match__()`` to
 use efficient code and avoid excessive method calls. Every match will use
 (recursive) iteration or indexing over the corresponding collection.
-Effectively pattern matching for lists and tuples will be no different from
-iterable unpacking plus matching sub-patterns.
+Effectively, pattern matching for lists and tuples will be not different from
+iterable unpacking plus matching all sub-patterns.
 
 Dictionaries are treated specially depending on whether a given key in
 the display pattern is a literal or a name (other are not allowed). If it is
@@ -644,28 +644,58 @@ pattern must also be a name. To illustrate the rules, consider an example::
       ...
   as {"name": x}:  # Doesn't match
       ...
-  as {"name": x, y: z}:  # Matches
+  as {"name": x, y: z} if y in ("ttl", "time"):  # Matches
       ...
   as {"name": x, **rest}:  # Matches
       ...
-  as {"name": x: y1: z1, y2: z2}:  # Doesn't match
+  as {"name": x, y1: z1, y2: z2}:  # Doesn't match
       ...
   as {x: 3600, y: "default"}:  # Invalid pattern
       ...
 
-Note that set display patterns are not very useful because of their unordered
-nature, and are supported just for completeness. Frozen sets are not supported
-because supporting them will be either ambiguous or tricky, see
-`rejected ideas`_.
+Note that sets and frozen sets are not supported because supporting them will
+be either ambiguous and tricky, see `rejected ideas`_.
 
 Specification for standard library classes are not included in this PEP.
 Support for them can be added incrementally when necessary (i.e. the default
 ``object.__match__()`` implementation doesn't provide reasonable support).
 Possible first candidate for a better ``__match__()`` method are named tuples.
 
+Am attempt to use builtin classes in structured class patterns will cause
+a ``TypeError`` with a suggestion to use a corresponding collection display.
+For example, one must use ``(x, y, z)`` instead of ``tuple(x, y, z)`` or
+``tuple([x, y, z])``, and ``{"foo": x, "bar": y}`` instead of
+``dict(foo=x, bar=y)`` or ``dict([("foo", x), ("bar", y)])``.
+
 
 Dataclasses
 -----------
+
+Dataclasses are special with respect to this PEP because they have a flexible
+auto-generated ``__init__()`` method. There we can generate a corresponding
+flexible ``__match__()`` method. It will provide the following improvements
+over the default ``object.__match__()``:
+
+* Positional match can be used even if ``__iter__()`` and ``__getitem__()``
+  are not defined in the class. We just pull the fields in the order they
+  are defined in the class (and superclasses).
+
+* Positional and named matches can be combined. However, a positional and
+  a named match must not target the same dataclass field. This will trigger
+  ``ImpossibleMatchError``.
+
+* All fields that don't have a default value or a default factory (see [5]_),
+  must be matched, so all of ``Point3D(x, y)``, ``Point3D(x=x, y=y)``, and
+  ``Point3D(x, y=y)`` will raise ``ImpossibleMatchError``.
+
+* To get a (less safe) partial match mimicking those in ``object.__match__()``
+  one can still use star items, e.g. ``Point3D(0, *other)``, and
+  ``Point3D(x=0, **other)`` work.
+
+* Fields with ``init=False`` (see [5]_) cannot be matched by position, but can
+  still be matched by name. This deviates from the general logic that pattern
+  should resemble instantiation call, but this is were practicality beats
+  purity.
 
 
 .. _static checkers:
@@ -881,13 +911,18 @@ this will make implementing this method very tedious, and there will be
 actual performance penalty if user does nothing.
 
 
-Implement builtin support for matches on ``frozenset``
-------------------------------------------------------
+Support matches for ``set`` and ``frozenset``
+---------------------------------------------
 
-No, because supporting this will require complicating the basic
-semantics and this will be probably used very rarely. Examples:
-``frozenset([x, y, z])`` vs ``frozenset({x, y, z})`` vs ``frozenset(x, y, z)``
-(order is problematic, or doesn't look like constructor).
+No, because
+
+* Sets are unordered, so hard do anything deterministic.
+
+* supporting ``frozenset`` will require complicating the basic
+  semantics and this will be probably used very rarely. Examples:
+  ``frozenset([x, y, z])`` vs ``frozenset({x, y, z})`` vs ``frozenset(x, y, z)``
+  (order is problematic, or doesn't look like constructor).
+
 We can reconsider if people will actually ask about this.
 
 
