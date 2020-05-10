@@ -251,7 +251,9 @@ building blocks. The following patterns are supported:
 
   For dictionaries and sets the order of items is ignored, so e.g. the result
   of matching ``{1, 2}`` against ``{x, y}`` is unpredictable, but the latter
-  will only match a set with two elements.
+  will only match a set with two elements, for dictionaries only name pattern
+  and literal pattern are allowed in the key position, see details in the
+  `runtime`_ section.
 
 * Unstructured class pattern is a synonym for an ``isinstance()`` check, it is
   mostly useful in nested positions, when the content of the object is not
@@ -534,40 +536,136 @@ The order between stepping into sub-patterns, checking guards, and checking
 any coinciding names is unspecified. The interpreter is free to choose
 the fast path and skip nested matches if it can already infer the match fails.
 
-Note that we always pass a plain ellipsis for every pattern, one could imagine
-faster and/or more flexible ``__match__()`` implementations with more context,
-but there are various downsides to this, see `rejected ideas`_.
+Note that we always pass a plain ellipsis for every pattern except literal,
+one could imagine faster and/or more flexible ``__match__()`` implementations
+with more context, but there are various downsides to this, see
+`rejected ideas`_.
 
 
 Impossible matches
 -------------------
 
-Encouraged to try to revert the ``__init__()`` rather than represent internal state,
-e.g. ``Foo([x, y, z])`` rather than ``Foo(x, y, z)`` if constructor always take a list.
-*Strongly* encouraged to raise on impossible matches.
+The implementers of custom classes that implem a custom ``__match__()`` are
+encouraged to "revert" the logic in the ``__init__()`` method rather than
+use the internal representation of the object state to fill the structured
+class pattern. This way, the match statements with such classes will have
+a uniform look with instantiation calls. For example, if there is a class::
+
+  class Point3D:
+      def __init__(self, coordinates: List[int]) -> None:
+          self.x, self.y, self.z = coordinates
+
+then the corresponding match method should expect a single list, rather than
+three integers::
+
+  match shape:
+  as Point3D([0, y, z]):  # Recommended
+      ...
+  as Point3D(coordinates=[0, y, z]):  # Recommended
+      ...
+  as Point3D(0, y, z):  # Not recommended
+      ...
+  as Point3D(x=0, y=y, z=z):  # Not recommended
+      ...
+
+The implementers of custom classes are *strongly* encouraged to raise
+a special builtin exception ``ImpossibleMatchError`` (proposed to be
+a subclass of ``TypeError``) instead of returning ``NotImplemented`` if
+the expected match is impossible in principle. This way subtle bugs will be
+caught sooner. For example, with the above class definition::
+
+  match shape:
+  as Point3D(x, y):  # Strongly recommended to raise here
+      ...
+
+Although these recommendations are in no way enforced by Python runtime,
+builtins and standard library classes will follow these recommendations.
 
 
 Default ``object.__match__()``
 ------------------------------
 
-Use ``__getitem__()`` and ``__getstate__()`` as fallback
+The default implementation is aimed at providing basic useful but still safe
+experience with pattern matching out of the box. For this purpose the match
+method follows this logic:
 
-Note: ``__slots__``
+* ``isinstance()`` will be automatically ensured by runtime, so no need to
+  do this.
 
+* Only either positional or named patterns may be present, mixing them will
+  cause ``ImpossibleMatchError``.
 
-Dataclasses
------------
+* For positional match, if the class defines ``__slots__``, try unpacking
+  them, if there is no star item and there is a length mismatch, raise
+  ``ImpossibleMatchError``. If some literals provided and don't match actual
+  values, then return ``NotImplemented``.
+
+* For positional match if class has a ``__dict__``, try using ``__iter__()``
+  and ``__getitem__()`` to perform iterable unpacking (while comparing to any
+  expected literals). If the class doesn't have these methods, raise
+  ``ImpossibleMatchError``.
+
+* For named match use ``getattr()`` for every name provided. To accommodate
+  typical use cases, match succeeds even if only some attributes were
+  requested and there is no star item. If the instance doesn't have a given
+  attribute, transform ``AttributeError`` into ``ImpossibleMatchError``.
+
+* As an exception to the above, empty match succeeds only if instance
+  dictionary is empty and there are no slots or empty slots.
+
+* If a class defines ``__getstate__()`` use it as an override to perform the
+  match by name.
 
 
 Builtin classes
 ---------------
 
-Builtin collections will be special-cased instead of using
-``__match__()`` to use efficient code and avoid excessive method
-calls.
+Builtin collections will be special-cased instead of using ``__match__()`` to
+use efficient code and avoid excessive method calls. Every match will use
+(recursive) iteration or indexing over the corresponding collection.
+Effectively pattern matching for lists and tuples will be no different from
+iterable unpacking plus matching sub-patterns.
 
-Standard library classes are not included here, can be added incrementally,
-but some are important such as named tuples.
+Dictionaries are treated specially depending on whether a given key in
+the display pattern is a literal or a name (other are not allowed). If it is
+a literal (not necessary a string), then the corresponding key will be taken
+from object using ``__getitem__()``, if the latter raises ``KeyError``, then
+the match fails. If the key is not a literal, an arbitrary item is pulled from
+the dictionary iterator. If there is a length mismatch and no star item,
+the dictionary match always fails.
+
+An additional safety restriction is that if key pattern is a name, the value
+pattern must also be a name. To illustrate the rules, consider an example::
+
+  config = {"name": "default", "ttl": 3600}
+
+  match config:
+  as {"foo": x}:  # Doesn't match
+      ...
+  as {"name": x}:  # Doesn't match
+      ...
+  as {"name": x, y: z}:  # Matches
+      ...
+  as {"name": x, **rest}:  # Matches
+      ...
+  as {"name": x: y1: z1, y2: z2}:  # Doesn't match
+      ...
+  as {x: 3600, y: "default"}:  # Invalid pattern
+      ...
+
+Note that set display patterns are not very useful because of their unordered
+nature, and are supported just for completeness. Frozen sets are not supported
+because supporting them will be either ambiguous or tricky, see
+`rejected ideas`_.
+
+Specification for standard library classes are not included in this PEP.
+Support for them can be added incrementally when necessary (i.e. the default
+``object.__match__()`` implementation doesn't provide reasonable support).
+Possible first candidate for a better ``__match__()`` method are named tuples.
+
+
+Dataclasses
+-----------
 
 
 .. _static checkers:
@@ -587,6 +685,55 @@ every class is matchable.
 
 Sealed classes as ADTs
 ----------------------
+
+Consider this (rather long) example::
+
+  from dataclasses import dataclass
+  from typing import sealed
+
+  @sealed
+  class Node:
+      ...
+
+  class Expression(Node):
+      ...
+
+  class Statement(Node):
+      ...
+
+  @dataclass
+  class Name(Expression):
+      name: str
+
+  @dataclass
+  class Operation(Expression):
+      left: Expression
+      op: str
+      right: Expression
+
+  @dataclass
+  class Assignment(Statement):
+      target: str
+      value: Expression
+
+  @dataclasses
+  class Print(Statement):
+      value: Expression
+
+Here a type checker can safely treat ``Node`` as
+``Union[Name, Operation, Assignment, Print]``, and also safely treat e.g.
+``Expression`` as ``Union[Name, Operation]``. So this will result in a type
+checking error, because ``Name`` is not handled (and type checker can give
+a useful error message)::
+
+  def dump(node: Node) -> str:
+      match node:
+      as Assignment(target, value):
+          return f"{target} = {dump(value)}"
+      as Print(value):
+          return f"print({dump(value)})"
+      as Operation(left, op, right):
+          return f"({dump(left)} {op} {dump(right)})"
 
 
 Type erasure
