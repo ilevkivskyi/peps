@@ -124,8 +124,8 @@ and together with dataclasses, will provide a nice support for algebraic data
 types [2]_. See `static checkers`_ section for more details.
 
 In general, we believe that pattern matching proved to be a useful and
-expressive tool in various modern languages. In particular, some aspects of
-this PEP were inspired by how pattern matches work in Rust [3]_ and
+expressive tool in various modern languages. In particular, many aspects of
+this PEP were inspired by how pattern matching works in Rust [3]_ and
 Scala [4]_.
 
 
@@ -201,7 +201,8 @@ statement. For example::
 Allowed patterns
 ----------------
 
-The following patterns are supported:
+We introduce the proposed syntax gradually. Here we start from the main
+building blocks. The following patterns are supported:
 
 * Literal pattern, i.e. a simple literal like a string, a number, boolean,
   or None::
@@ -445,19 +446,113 @@ Runtime specification
 The ``__match__()`` protocol
 ----------------------------
 
-Depth first
+Here we specify how structured class patterns work using the ``__match__()``
+special method. This method is implicitly a class method, and has the following
+signature::
 
-Literals are passed to allow to fail fast.
+  PosData = Tuple[object, ...]
+  NamedData = Dict[str, object]
+  MathData = Tuple[PosData, NamedData, Optional[PosData], Optional[NamedData]]
+
+  def __match__(
+      cls,
+      value: object,
+      pos: PosData,
+      named: NamedData,
+      star_pos: bool = False,
+      star_named: bool = False,
+  ) -> Union[NotImplemented, MatchData]:
+      ...
+
+When an interpreter tries to match a value again a structured class pattern,
+it first calls ``isinstance(value, Class)``. If the call returns ``True``, it
+then makes the following call::
+
+  Class.__match__(
+      value,
+      pos_vales,
+      named_values,
+      is_star_pos_present,
+      is_star_named_present,
+  )
+
+In ``pos_values`` every sub-pattern is represented by an ``Ellipsis`` object,
+while literals are included as is. We pass literals instead of later comparing
+the matched value to allow user classes to implement efficient matches by
+failing soon. The same logic applies to ``named_values`` where the dictionary
+keys are strings used as names in for the named match. Last two arguments
+indicate whether ``*`` or ``**`` patterns are present. For example, this
+match arm will trigger the following call::
+
+  match shape:
+  as Point3D(0, y, z, painted=True, visible=visible, **flags):
+      ...
+
+  Point3D.__match__(
+      shape,
+      (0, ..., ...),
+      {"painted": True, "visible": ...},
+      False,
+      True,
+  )
+
+The method is then expected to either return ``NotImplemented`` which means
+the match failed or return a value for every ellipsis placeholder. The
+initial literal values passed in should not be included in the return, only
+the missing values. If star patterns were present it is expected to return
+corresponding values packed as tuple or and dict, and to return ``None``
+otherwise.
+
+So in the example above a valid return would look like this::
+
+  (1, 2), {"visible": False}, None, {"fast_render": False}
+
+Any violation in the expected return object will trigger ``RuntimeError``, in
+particular:
+
+* Returned length mismatches the expected one.
+* Returned values contain ``Ellipsis`` among them.
+* Unexpected star data where none expected or vice versa.
+
+If all the matched patterns were name patterns, then interpreter performs
+the corresponding assignments, otherwise it tries to match the returned values
+against sub-patterns. For example the following code will trigger the following
+(simplified) sequence of calls::
+
+  match shape:
+  as Line(Point(x1, 1), Point(x2, 2)):
+      ...
+
+  isinstance(shape, Line)
+  (_1, _2), *_ = Line.__match__(shape, (..., ...), {})
+  isinstance(_1, Point)
+  (x1,), *_ = Point.__match__(_1, (..., 1), {})
+  isinstance(_2, Point)
+  (x2,), *_ = Point.__match__(_2, (..., 2), {})
+
+The order between stepping into sub-patterns, checking guards, and checking
+any coinciding names is unspecified. The interpreter is free to choose
+the fast path and skip nested matches if it can already infer the match fails.
+
+Note that we always pass a plain ellipsis for every pattern, one could imagine
+faster and/or more flexible ``__match__()`` implementations with more context,
+but there are various downsides to this, see `rejected ideas`_.
 
 
 Impossible matches
 -------------------
+
+Encouraged to try to revert the ``__init__()`` rather than represent internal state,
+e.g. ``Foo([x, y, z])`` rather than ``Foo(x, y, z)`` if constructor always take a list.
+*Strongly* encouraged to raise on impossible matches.
 
 
 Default ``object.__match__()``
 ------------------------------
 
 Use ``__getitem__()`` and ``__getstate__()`` as fallback
+
+Note: ``__slots__``
 
 
 Dataclasses
@@ -471,6 +566,9 @@ Builtin collections will be special-cased instead of using
 ``__match__()`` to use efficient code and avoid excessive method
 calls.
 
+Standard library classes are not included here, can be added incrementally,
+but some are important such as named tuples.
+
 
 .. _static checkers:
 
@@ -482,6 +580,9 @@ Exhaustiveness checks
 
 PEP 484 specifies exhaustiveness checks for enum values. This PEP
 generalize this requirement to arbitrary patterns.
+
+Side note: no ``Matchable`` protocol (in terms of PEP 544) is needed, because
+every class is matchable.
 
 
 Sealed classes as ADTs
@@ -528,8 +629,19 @@ before acceptance.
 Rejected Ideas
 ==============
 
-Just allow a more flexible assignment targets
----------------------------------------------
+This general idea was floating around for pretty long time, and many
+back and forth decisions were made. Here we summarize many alternative
+paths that were taken, but abandoned after all.
+
+Split dataclasses and typing parts into separate PEPs
+-----------------------------------------------------
+
+No, because this is a major change to Python and such changes should apply
+coherently to various aspects of the language.
+
+
+Allow a more flexible assignment targets
+----------------------------------------
 
 Aka irrefutable matches.
 No, because it is not what is commonly needed, people want an ``if``.
@@ -572,7 +684,13 @@ No, because:
 Support constant pattern
 ------------------------
 
+This is probably the trickiest point.
+
 No, because it is too ambiguous. Also use guards or ``if x == BLACK: ...``.
+
+Alternative implementations can emmit a more efficient calls by transforming
+trivial equality guards into pass on values. Python may make this optimization
+as well.
 
 
 Use dispatch dict semantics for matches
@@ -608,12 +726,22 @@ No, because this is subtle and may be unexpected, instead use ``_1``, ``_2``
 etc.
 
 
+Send full patterns to the ``__match__()`` method
+------------------------------------------------
+
+We could send a custom object to provide more context, but no,
+this will make implementing this method very tedious, and there will be
+actual performance penalty if user does nothing.
+
+
 Implement builtin support for matches on ``frozenset``
 ------------------------------------------------------
 
 No, because supporting this will require complicating the basic
-semantics and this will be probably used very rarely. We can reconsider
-if people will actually ask about this.
+semantics and this will be probably used very rarely. Examples:
+``frozenset([x, y, z])`` vs ``frozenset({x, y, z})`` vs ``frozenset(x, y, z)``
+(order is problematic, or doesn't look like constructor).
+We can reconsider if people will actually ask about this.
 
 
 References
