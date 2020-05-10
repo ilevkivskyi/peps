@@ -96,7 +96,7 @@ the reliability perspective, experience shows that missing a case when dealing
 with a set of possible data values leads to hard to debug issues, thus forcing
 people to add safety asserts like this::
 
-  def get_first(data: Union[int, List[int]]) -> int:
+  def get_first(data: Union[int, list[int]]) -> int:
       if isinstance(data, list) and data:
           return data[0]
       elif isinstance(data, int):
@@ -321,6 +321,7 @@ appear in a pattern are bound after the guard succeeds. So this will raise
 a ``NameError``::
 
   values = [0]
+
   match value:
   as [x] if x:
       ...
@@ -452,9 +453,9 @@ Here we specify how structured class patterns work using the ``__match__()``
 special method. This method is implicitly a class method, and has the following
 signature::
 
-  PosData = Tuple[object, ...]
-  NamedData = Dict[str, object]
-  MathData = Tuple[PosData, NamedData, Optional[PosData], Optional[NamedData]]
+  PosData = tuple[object, ...]
+  NamedData = dict[str, object]
+  MathData = tuple[PosData, NamedData, Optional[PosData], Optional[NamedData]]
 
   def __match__(
       cls,
@@ -706,17 +707,73 @@ Static checkers specification
 Exhaustiveness checks
 ---------------------
 
-PEP 484 specifies exhaustiveness checks for enum values. This PEP
-generalize this requirement to arbitrary patterns.
+PEP 484 specifies that static type checkers should support exhaustiveness in
+conditional checks with respect to enum values. PEP 586 later generalized this
+requirement to literal types. This PEP further generalizes this requirement to
+arbitrary patterns. A typical situation where this applies is matching an
+expression a union type::
 
-Side note: no ``Matchable`` protocol (in terms of PEP 544) is needed, because
-every class is matchable.
+  def classify(val: Union[int, Tuple[int, int], List[int]]) -> str:
+      match val:
+      as [x, *other]:
+          return f"A list starting with {x}"
+      as (x, y):
+          return f"A pair of {x} and {y}"
+      as int(...):
+          return f"Some integer"
+      # Type-checking error: a list of zero elements unhandled.
+
+The exhaustiveness checks should also apply where both pattern matching
+and enum values are combined::
+
+  from enum import Enum
+  from typing import Union
+
+  class Level(Enum):
+      BASIC = 1
+      ADVANCED = 2
+      PRO = 3
+
+  class User:
+      name: str
+      level: Level
+
+  class Admin:
+      name: str
+
+  account: Union[User, Admin]
+
+  match account:
+  as Admin(name=name):
+  as User(name=name, level=level) if level == Level.PRO
+      ...
+  as User(level=level) if level == Level.ADVANCED:
+      ...
+  # Type-checking error: basic user unhandled
+
+Obviously, no ``Matchable`` protocol (in terms of PEP 544) is needed, since
+every class is matchable and therefore is subject to the checks specified
+above.
 
 
 Sealed classes as ADTs
 ----------------------
 
-Consider this (rather long) example::
+Quite often it is desirable to apply exhaustiveness to a set of classes without
+defining ad-hoc union types, which is itself fragile if a class is missing in
+the union definition. A design pattern where a group of record-like classes is
+combined into a union is popular in other languages that support pattern
+matching and is known under a name of algebraic data types [2]_ or ADTs.
+
+We propose to add a special decorator class ``@sealed`` to the ``typing``
+module [6]_, that will have no effect at runtime, but will indicate to static
+type checkers that all subclasses (direct and indirect) of this class should
+be defined in the same module as the base class.
+
+The idea is that since all subclasses are known, the type checker can treat
+the sealed base class as a union of all its subclasses. Together with
+dataclasses this allows a clean and safe support of ADTs in Python. Consider
+this example::
 
   from dataclasses import dataclass
   from typing import sealed
@@ -750,11 +807,11 @@ Consider this (rather long) example::
   class Print(Statement):
       value: Expression
 
-Here a type checker can safely treat ``Node`` as
+With such definition, a type checker can safely treat ``Node`` as
 ``Union[Name, Operation, Assignment, Print]``, and also safely treat e.g.
 ``Expression`` as ``Union[Name, Operation]``. So this will result in a type
-checking error, because ``Name`` is not handled (and type checker can give
-a useful error message)::
+checking error in the below snippet, because ``Name`` is not handled (and type
+checker can give a useful error message)::
 
   def dump(node: Node) -> str:
       match node:
@@ -769,22 +826,102 @@ a useful error message)::
 Type erasure
 ------------
 
-``IntQueue = Queue[int]`` should be rejected in unstructured match.
-Note this fails at runtime with current implementation of ``typing``
-and PEP 585.
+The unstructured class patterns are subject to runtime type erasure. Namely,
+although one can define a type alias``IntQueue = Queue[int]`` so that
+a pattern like ``IntQueue(...)`` is syntactically valid, type checkers should
+rejected such unstructured match::
 
-In general, generic classes are allowed, if sub-patterns bind
-the type variables.
+  queue: Union[Queue[int], Queue[str]]
+  match queue as IntQueue(...):  # Type-checking error here.
+      ...
+
+Note that the above snippet actually fails at runtime with the current
+implementation of generic classes in ``typing`` module, and builtin generic
+classes in recently accepted and PEP 585.
+
+To clarify, in general generic classes are not prohibited from participating
+in pattern matching, just that their type parameters can't be explicitly
+specified. It is still fine if sub-patterns or literals bind the type
+variables. For example::
+
+  from typing import Generic, TypeVar, Union
+
+  T = TypeVar('T')
+
+  class Result(Generic[T]):
+      first: T
+      other: list[T]
+
+  result: Union[Result[int], Result[str]]
+
+  match result:
+  as Result(first=int(...)):
+      ...  # Type of result is Result[int] here
+  as Result(other=["foo", "bar", *rest]):
+      ...  # Type of result is Result[str] here
 
 
 Note about constants
 --------------------
 
+The fact that name pattern is always an assignment target may create unwanted
+consequences when a user by mistake tries to "match" a value against
+a constant. As a result, at runtime such match will always succeed and
+moreover override the value of the constant. It is important therefore that
+static type checkers. For example::
+
+  from typing import Final
+
+  MAX_INT: Final = 2 ** 64
+
+  value = 0
+
+  match value:
+  as MAX_INT:  # Type-checking error here: cannot assign to final name
+      print("Got big number")
+  as _:
+      print("Something else")
+
 
 Precise type checking of star matches
 -------------------------------------
 
-A transform example keeping line and column.
+Type checkers should perform precise type checking of star items in pattern
+matching giving them either a heterogeneous `tuple[X, Y, Z]` type, or
+a ``TypedDict`` type as specified by PEP 589. For example::
+
+  from dataclasses import dataclass
+
+  class Expession:
+      ...
+
+  class Statement:
+      ...
+
+  @dataclass
+  class AssignmentExpression(Expression):
+      target: str
+      value: Expression
+      line: int = -1
+      column: int = -1
+
+  @dataclass
+  class AssignmentStatement(Statement):
+      target: str
+      value: Expression
+      line: int = -1
+      column: int = -1
+
+  def transform(expr: Expression) -> Statement:
+      match expr:
+      as AssignmentExpression(target, value, **position):
+          # Here position is TypedDict({"line": int, "column": int})
+          # so the below call is safe
+          return AssignmentStatement(f"{target}_tr", value, **position)
+      as AssignmentExpression(target, *rest):
+          # Here rest is tuple[Expression, int, int]
+          # so the below call is a type-checking error
+          return AssignmentStatement(*rest)
 
 
 Backwards Compatibility
@@ -796,8 +933,8 @@ This PEP is fully backwards compatible.
 Reference Implementation
 ========================
 
-None yet. If there will be a general positive attitude towards the PEP,
-we will start work on implementation soon to iron out possible corner cases
+None yet. If there will be a general positive attitude towards the PEP, we
+will start working on implementation soon to iron out possible corner cases
 before acceptance.
 
 
@@ -809,6 +946,16 @@ Rejected Ideas
 This general idea was floating around for pretty long time, and many
 back and forth decisions were made. Here we summarize many alternative
 paths that were taken, but abandoned after all.
+
+Do not do this, patter matching is hard to learn
+------------------------------------------------
+
+In our opinion this is not more difficult than ``isinstance()`` plus
+``getattr()``. Also this follows the general spirit of Python when language
+disappears and only the "business logic" is left. Whenever possible, it is
+better to explain what to do, than how to do it (this matches how people
+think).
+
 
 Split dataclasses and typing parts into separate PEPs
 -----------------------------------------------------
@@ -827,7 +974,8 @@ No, because it is not what is commonly needed, people want an ``if``.
 Make it an expression
 ---------------------
 
-No, because it is inconsistent with other things in Python
+No, because it is inconsistent with other things in Python (decision making
+logic is almost exclusively in statements).
 
 
 Use a hard keyword
