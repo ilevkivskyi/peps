@@ -21,7 +21,7 @@ heterogeneous data. The PEP takes a holistic approach and contains syntax
 specification, runtime specification, and recommended specification for static
 type checkers.
 
-Previously PEP 275 and PEP 3101 that proposed similar constructs were
+Previously PEP 275 and PEP 3103 that proposed similar constructs were
 rejected. Here we choose a different approach and focus on generalizing
 iterable and dictionary unpacking instead just syntax-sugaring and optimizing
 ``if ... elif ... else`` statement. Also, recently implemented PEP 617
@@ -358,6 +358,11 @@ and a guard::
       y = _4
       ...
 
+Note that this case diverges from the semantics of iterable unpacking, because
+the latter simply sequentially assigns values to the same variable, but we
+believe that checking for the values to be same it is what people would
+typically expect.
+
 
 Named sub-patterns
 ------------------
@@ -395,20 +400,23 @@ syntax, it was found that single arm matches would be used relatively often,
 mostly for various special-casing. In other languages this is supported in
 the form of one-off matches. We propose to support such one-off matches::
 
-  if match value as pattern:
+  if match value as pattern [and guard]:
       ...
 
 as equivalent to the following expansion::
 
   match value:
-  as pattern:
+  as pattern [if guard]:
       ...
   else:
       pass  # Note: not raising UnmatchedValue exception here
 
 There will be no ``elif match`` statements allowed. One-off match is special
-case of ``match`` statement, not a special case of an ``if`` statement. To
-illustrate how this will benefit readability, consider this (slightly
+case of ``match`` statement, not a special case of an ``if`` statement.
+Similarly, ``if not match`` is not allowed, since ``match`` is not an
+expression.
+
+To illustrate how this will benefit readability, consider this (slightly
 simplified) snippet from real code::
 
   if isinstance(node, CallExpr):
@@ -417,28 +425,13 @@ simplified) snippet from real code::
           call = node.callee.name
           arg = node.args[0].name
           ...  # Continue special-casing 'call' and 'arg'
-  ...  # Follow with generic code
+  ...  # Follow with common code
 
-This can be rewritten in a more obvious way as::
+This can be rewritten in a more straightforward way as::
 
   if match node as CallExpr(callee=NameExpr(name=call), args=[NameExpr(name=arg)]):
       ...  # Continue special-casing 'call' and 'arg'
-  ...  # Follow with generic code
-
-
-Similar we propose a ``while match`` shorthand for processing streams of
-heterogeneous data where some kind needs special-casing. For example::
-
-  def get_next_data() -> Union[Chunk, Timeout]:
-      ...
-
-  while match get_next_data() as Chunk(data, checksum=0):
-      ...  # Do something with data
-
-
-No guards are allowed in one-off matches, their semantics in case off single
-match arm can be always represented by the same ``if`` statement put on
-a separate line.
+  ...  # Follow with common code
 
 
 .. _runtime:
@@ -947,131 +940,362 @@ This general idea was floating around for pretty long time, and many
 back and forth decisions were made. Here we summarize many alternative
 paths that were taken, but abandoned after all.
 
-Do not do this, patter matching is hard to learn
-------------------------------------------------
+Don't do this, patter matching is hard to learn
+-----------------------------------------------
 
-In our opinion this is not more difficult than ``isinstance()`` plus
-``getattr()``. Also this follows the general spirit of Python when language
-disappears and only the "business logic" is left. Whenever possible, it is
-better to explain what to do, than how to do it (this matches how people
-think).
+In our opinion, the proposed pattern matching is not more difficult than
+adding ``isinstance()`` and ``getattr()`` to iterable unpacking. Also, we
+believe the proposed syntax significantly improves readability for a wide
+range of code patterns, by allowing to express *what* one wants to do, rather
+than *how* to do it. We hope few real code snippets we included in the PEP
+illustrate this comparison well enough.
+
+Here are some other snippets from CPython repository that may potentially
+benefit from pattern matching::
+
+  # Doc/tools/extensions/pyspecific.py
+  if node.children and isinstance(node[0], nodes.paragraph) and node[0].rawsource:
+      ...
+
+  # Lib/_pydecimal.py
+  if equality_op and isinstance(other, _numbers.Complex) and other.imag == 0:
+      ...
+
+  # Lib/logging/__init__.py
+  if (args and len(args) == 1 and isinstance(args[0], collections.abc.Mapping)
+      and args[0]):
+      args = args[0]
+
+  # Tools/clinic/clinic.py
+  if isinstance(expr, ast.Name) and expr.id == 'NULL':
+      ...
+  elif (isinstance(expr, ast.BinOp) or
+      (isinstance(expr, ast.UnaryOp) and
+       not (isinstance(expr.operand, ast.Num) or
+            (hasattr(ast, 'Constant') and
+             isinstance(expr.operand, ast.Constant) and
+             type(expr.operand.value) in (int, float, complex)))
+      )):
+      ...
+  elif isinstance(expr, ast.Attribute):
+      ...
+  else:
+      ...
+
+  # Tools/parser/unparse.py
+  if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
+      ...
+
+Notably, there is a tendency that such code patterns most often appear in
+various parsing/compiling contexts. We don't think however that this
+application-domain tendency should stop us.
 
 
 Split dataclasses and typing parts into separate PEPs
 -----------------------------------------------------
 
-No, because this is a major change to Python and such changes should apply
-coherently to various aspects of the language.
+There was an option to make three separate PEPs: one for the syntax, one for
+the dataclasses improvements, and for fot static typing. We propose to have
+one larger PEP instead of three separate, because this is a major change to
+Python and such changes should apply coherently to various aspects of
+the language.
+
+In particular, the specification for default ``object.__match__()`` and
+generated match for dataclasses affect the decision on support for structured
+class patterns. And the support for sealed classes in ``typing`` module depends
+on good support for pattern matching of dataclasses.
 
 
-Allow a more flexible assignment targets
-----------------------------------------
+Allow a more flexible assignment targets instead
+------------------------------------------------
 
-Aka irrefutable matches.
-No, because it is not what is commonly needed, people want an ``if``.
+There was an idea to instead just generalize the iterable unpacking to much
+more general assignment targets, instead of adding a new kind of statement.
+This concept is known in some other languages as "irrefutable matches". We
+decided not to do this because inspection of real-life potential use cases
+showed that in vast majority of cases destructuring is related to an ``if``
+condition. Also many of those are grouped in a series of exclusive choices.
+
+Note however that single ``if`` condition still appears relatively often, this
+is why we propose to allow one-off matches.
 
 
 Make it an expression
 ---------------------
 
-No, because it is inconsistent with other things in Python (decision making
-logic is almost exclusively in statements).
+In most other languages pattern matching is represented by an expression, not
+statement. But making it an expression would be inconsistent with other
+syntactic choices in Python. All decision making logic is expressed almost
+exclusively in statements, so we decided to not deviate from this.
 
 
 Use a hard keyword
 ------------------
 
-Although it would significantly simplify life for simple No, because:
+There were options to make ``match`` a hard keyword, or choose a different
+keyword. Although using a hard keyword would simplify life for simple-minded
+syntax highlighters, we decided not to use hard keyword for several reasons:
 
-* The new parser doesn't require us to do this.
+* Most importantly, the new parser doesn't require us to do this. Unlike with
+  ``async`` that caused hardships with being a soft keyword for few releases,
+  here we can make ``match`` a permanent soft keyword.
 
-* ``match`` is so commonly used in existing code
+* ``match`` is so commonly used in existing code, that it would break almost
+  every existing program and will put a burned to fix code on many people who
+  may not even benefit from the new syntax.
+
+* It is hard to find an alternative keyword that would not be commonly used
+  in existing programs as an identifier, and would stilll clearly reflect the
+  meaning of the statement.
+
+
+Use ``case`` instead of ``as`` for match arms
+---------------------------------------------
+
+There are three arguments in favour of using ``as`` as a keyword to start each
+match arm:
+
+* It is a bit shorter so will save some keystrokes and horizontal space, which
+  mat be important since this keyword will be repeated many times.
+
+* Use of ``case`` is often associated with ``switch``, while using ``as`` is
+  closer to plain English formulation of the concept.
+
+* It is already a hard keyword, so we would need only one soft keyword instead
+  of two.
 
 
 Use a nested indentation scheme
 -------------------------------
 
-No, because it can be really long for nested match statements.
+There was an idea to use an alternative indentation scheme, for example where
+every match arm would be indented with respect to the initial ``match`` part::
+
+  match expression:
+      as patter_1:
+          ...
+      as pattern_2:
+          ...
+      else:
+          ...
+
+This idea was rejected because having nested match statements would waste too
+much horizontal space. There are few more possible indentation schemes
+summarized in PEP 3103, and the scheme proposed in this PEP seems the most
+optimal.
 
 
-Use ``or`` to combine matches
------------------------------
+Use ``|`` and ``!`` to combine patterns
+---------------------------------------
 
-No, because:
+It may be convenient to have alternative matches and negative matches (similar
+to string regular expressions). For example one could write::
 
-* Can cause ambiguity with guards, also with other operators like ``|``.
+  match expr:
+  as BinaryOp(left=!IntExpr(value=0)):
+      ...
+  as UnaryOp(operand=IntExpr(value=0) | NameExpr(name="False")):
+      ...
 
-* In real life it will be anyway split over multiple lines.
+Although some real code shows this can indeed be useful, we decided not to
+include these in the present PEP for several reasons:
 
-* Using multiple arms is not uncommon in other languages.
+* This will significantly complicate the specification and implementation. In
+  particular interaction with name pattern may be non-trivial.
+
+* In real life, top-level alternative matches would be often split over
+  multiple lines anyway. So this would look essentially not different from
+  having multiple arms.
+
+* Nested alternative matches and negative matches will be likely not needed
+  often, and may be added in future if requested by users.
+
+* This can be sometimes expressed using guards and or nested match statements
 
 
 Support constant pattern
 ------------------------
 
-This is probably the trickiest point.
+This is probably the trickiest item. Matching against some pre-defined
+constants is very common, but also dynamic nature of Python makes it ambiguous
+with name patterns. Four other alternatives were considered:
 
-No, because it is too ambiguous. Also use guards or ``if x == BLACK: ...``.
+* Use some implicit rules. For example if a name was defined in the global
+  scope, then it refers to a constant, rather than represents a name pattern::
 
-Alternative implementations can emmit a more efficient calls by transforming
-trivial equality guards into pass on values. Python may make this optimization
-as well.
+    FOO = 1
+    value = 0
+
+    match value:
+    as FOO:  # This would not be matched
+        ...
+    as BAR:
+        ...  # This would be matched
+
+  This however can cause surprises and action at a distance if someone
+  defines an unrelated coinciding name before the match statement.
+
+* Use extra parentheses to indicate lookup semantics for a given name. For
+  example::
+
+    FOO = 1
+    value = 0
+
+    match value:
+    as (FOO):  # This would not be matched
+        ...
+    as BAR:
+        ...  # This would be matched
+
+  This may be a viable option, but it can create some visual noise if used
+  often. Also honestly it looks pretty unusual, especially in nested contexts.
+
+* Introduce a special symbol, for example ``$`` to indicate that given name is
+  a constant to be matched against, not to be assigned to::
+
+    FOO = 1
+    value = 0
+
+    match value:
+    as $FOO:  # This would not be matched
+        ...
+    as BAR:
+        ...  # This would be matched
+
+  The problem with this approach is that introducing a new syntax for such
+  narrow use-case is probably an overkill.
+
+* There was also on idea to make lookup semantics the default, and require
+  ``$`` to be used in name patterns::
+
+    FOO = 1
+    value = 0
+
+    match value:
+    as FOO:  # This would not be matched
+        ...
+    as $BAR:
+        ...  # This would be matched
+
+  But the name patterns are much more common in typical code, so having
+  special syntax for common case would be weird.
+
+After all, these alternatives were rejected because of mentioned drawbacks.
+Note that many use cases for constant matches can be remedied with guards. For
+example::
+
+  FOO = 1
+  value = 0
+
+  match value:
+  as some if some == FOO:  # This would not be matched
+      ...
+  as BAR:
+      ...  # This would be matched
+
+Finally, possible performance implications for using guards instead of
+constant patterns can be remedied by a compiler optimization that will detect
+trivial equality guards and transforming them into looked up values.
 
 
 Use dispatch dict semantics for matches
 ---------------------------------------
 
-No, because it may be very tricky if possible at all (unlike for switch
-statement).
+Implementations for classic ``switch`` statement sometimes use a pre-computed
+hash table instead of a chained equality comparisons to gain some performance.
+In the context of ``match`` statement this is technically also possible for
+matches against literal patterns. However, having subtly different semantics
+for different kinds of patterns would be too surprising for potentially
+modest performance win.
+
+We can still experiment with possible performance optimizations in this
+direction if they will not cause semantic differences.
 
 
 Allow fall through without a match
 ----------------------------------
 
-No, because:
+There was an alternative to allow falling through all match arms without
+a match. It was decided not to allow this, and by default raise an
+``UnmatchedValue`` exception. There are few reasons:
 
-* This can cause subtle bugs.
+* This can cause subtle bugs. In view this it is preferable that the safer
+  option is the default one.
 
-* It is easy to add an ``else`` match arm.
+* It is always easy to add an ``else`` match arm.
 
-* Use ad-hoc matches for special cases.
-
-
-Allow ``elif match`` statements
--------------------------------
-
-No, because there should be only one way to do it. If people will ask about
-this, we can always reconsider later.
+* For ad-hoc special casing where adding a dummy ``else`` clause would be
+  tedious, one cause one-off matches.
 
 
-Ignore underscores in coinciding name match
--------------------------------------------
+Allow ``elif match`` and other one-offs
+---------------------------------------
 
-No, because this is subtle and may be unexpected, instead use ``_1``, ``_2``
-etc.
+There was to allow multi-branch one-off matches of the following form::
+
+  if match value_1 as patter_1 [and guard_1]:
+      ...
+  elif match value_2 as pattern_2 [and guard_2]:
+      ...
+  elif match value_3 as pattern_3 [and guard_3]:
+      ...
+  else:
+      ...
+
+It was decided not to this. Mainly because these defeats the purpose of
+one-off matches as a complement to exhaustive full matches. Similarly, we
+don't propose ``while match`` construct present in some languages with pattern
+matching, since although it may be handy, it will likely be used rarely.
+Finally, this is easy to add later.
 
 
 Send full patterns to the ``__match__()`` method
 ------------------------------------------------
 
-We could send a custom object to provide more context, but no,
-this will make implementing this method very tedious, and there will be
-actual performance penalty if user does nothing.
+The current specification for ``__match__()`` protocol prescribes that we
+always send just a plain ``...`` as placeholder for a pattern. There was
+an idea to send custom pattern objects that will provide the full context.
+For example the below match would generate the following call::
+
+  match expr:
+  as BinaryOp(left=Number(value=x), op=op, right=Number(value=y)):
+      ...
+
+  from types import PatternObject
+
+  BinaryOp.__match__(
+      (),
+      {
+          "left": PatternObject(Number, (), {"value": x}, -1, False),
+          "op": ...,
+          "right": PatternObject(Number, (), {"value": y}, -1, False),
+      },
+      -1,
+      False,
+  )
+
+This would allow faster ``__match__()`` implementations and better support
+customization in custom classes. There is however a big downside to this: it
+will make basic implementation of this method really tedious. Also there will
+be actual performance penalty if user does not treat pattern object properly.
 
 
 Support matches for ``set`` and ``frozenset``
 ---------------------------------------------
 
-No, because
+There was an idea to add support for set literal patterns, and ``frozenset``
+patterns (mostly for completeness). We don't do this because there are two
+complications that arise:
 
-* Sets are unordered, so hard do anything deterministic.
+* First of all, sets are unordered, so it is hard do define any deterministic
+  semantics.
 
-* supporting ``frozenset`` will require complicating the basic
-  semantics and this will be probably used very rarely. Examples:
-  ``frozenset([x, y, z])`` vs ``frozenset({x, y, z})`` vs ``frozenset(x, y, z)``
-  (order is problematic, or doesn't look like constructor).
+* Second, supporting ``frozenset`` is even more ambiguous and will be used very
+  rarely. Namely, in addition to the general ordering issue, there are three
+  possible forms to support ``frozenset([x, y, z])`` vs ``frozenset({x, y, z})``
+  vs ``frozenset(x, y, z)``.
 
-We can reconsider if people will actually ask about this.
+We can reconsider later if people will actually ask about supporting this.
 
 
 References
