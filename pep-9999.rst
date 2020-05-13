@@ -16,16 +16,16 @@ Abstract
 ========
 
 This PEP proposes to add pattern matching statements [1]_ to Python. This will
-allow more readable and reliable code when dealing with well structured
+allow more readable and reliable code when dealing with structured
 heterogeneous data. The PEP takes a holistic approach and contains syntax
 specification, runtime specification, and recommended specification for static
 type checkers.
 
 Previously PEP 275 and PEP 3103 that proposed similar constructs were
 rejected. Here we choose a different approach and focus on generalizing
-iterable and dictionary unpacking instead just syntax-sugaring and optimizing
+iterable and dictionary unpacking instead of syntax-sugaring and optimizing
 ``if ... elif ... else`` statement. Also, recently implemented PEP 617
-introduced a new PEG parser for Python now allows more flexible syntactic
+that introduced a new PEG parser for Python now allows more flexible syntactic
 options.
 
 
@@ -33,11 +33,12 @@ Rationale and Goals
 ===================
 
 Let us start from some anecdotal evidence: ``isinstance()`` is one of the most
-called functions in large scale Python code-bases by static call count.
+called functions in large scale Python code-bases (by static call count).
 In particular, when analyzing some multi-million line production code base,
 it was discovered that ``isinstance()`` is the second mast called builtin
 function (after ``len()``). Even taking into account builtin classes, it is
-still in the top ten.
+still in the top ten. Most of such calls are followed by specific attribute
+access.
 
 There are two possible conclusions that can be made from this information:
 
@@ -173,10 +174,10 @@ Match semantics
 ---------------
 
 The proposed large scale semantics for choosing the match is to choose first
-matching pattern and and execute the corresponding suite. The remaining
-patterns are not tried. If there are no matching pattens, the ``else`` clause
-is executed. If the latter is absent, an instance of ``UnmatchedValue``
-(proposed to be a subclass of ``ValueError``) is raised.
+matching pattern and execute the corresponding suite. The remaining patterns
+are not tried. If there are no matching pattens, the ``else`` clause is
+executed. If the latter is absent, an instance of ``UnmatchedValue`` (proposed
+to be a subclass of ``ValueError``) is raised.
 
 Essentially this is equivalent to a chain of ``if ... elif ... else`` except
 the default ``else`` clause is to raise an exception. Note that unlike for
@@ -205,7 +206,7 @@ We introduce the proposed syntax gradually. Here we start from the main
 building blocks. The following patterns are supported:
 
 * Literal pattern, i.e. a simple literal like a string, a number, boolean,
-  or None::
+  or ``None``::
 
     match number:
     as 1:
@@ -230,8 +231,8 @@ building blocks. The following patterns are supported:
 
   Note that name pattern always succeeds. No special meaning is attached to
   names that start with underscores. A name pattern appearing in a scope
-  makes this name local to that scope. For example, using ``name`` after
-  the above snippet will raise ``UnboundLocalError`` rather than ``NameError``
+  makes the name local to that scope. For example, using ``name`` after
+  the above snippet may raise ``UnboundLocalError`` rather than ``NameError``,
   if the ``None`` match arm was taken.
 
 * Display pattern is a generalization of iterable unpacking and supports
@@ -261,7 +262,7 @@ building blocks. The following patterns are supported:
 
     match shapes:
     as [Point(...), second, third, *other]:
-        print(f"Hm, the first one is point, then {second} and {third}")
+        print(f"The first one is some point, then {second} and {third}")
 
 * Structured class pattern supports two possible ways of matching: by position
   like ``Point(x, y)``, and by name like ``User(id=id, name=name)``. These two
@@ -277,12 +278,12 @@ building blocks. The following patterns are supported:
     as Rectangle(*coordinates, painted=True):
         ...
 
-  This PEP only fully specifies the behavior ``__match__()``
-  for ``object`` and dataclasses, custom classes are only required to follow
-  the protocol specified in `runtime`_ section. After all, the authors of
-  a class know best how to "revert" the logic of the ``__init__()`` they wrote.
-  The runtime will then chain these calls to allow matching against arbitrarily
-  nested patterns.
+  This PEP only fully specifies the behavior of ``__match__()`` for ``object``
+  and dataclasses, custom classes are only required to follow the protocol
+  specified in `runtime`_ section. After all, the authors of a class know best
+  how to "revert" the logic of the ``__init__()`` they wrote. The runtime will
+  then chain these calls to allow matching against arbitrarily nested
+  patterns.
 
 
 Guards
@@ -290,7 +291,7 @@ Guards
 
 Each *top-level* pattern can be followed by a guard of the form
 ``if expression``. A match arm succeeds if the pattern matches and
-the guard evaluates to true. For example::
+the guard evaluates to true value. For example::
 
   match shape:
   as Point(x, y, color) if color == BLACK:
@@ -382,8 +383,8 @@ Note that the name pattern used in the named sub-pattern can be used in
 the match suite, or after the match statement. Another example::
 
   match group_shapes():
-  as ([], [point := Point(x, y), *other]):
-      print(f"Got {point} in the second group at {x}, {y}")
+  as [], [point := Point(x, y), *other]:
+      print(f"Got {point} in the second group")
       ...
 
 Technically, most such examples can be rewritten using guards and/or nested
@@ -398,7 +399,7 @@ One-off matches
 While inspecting some code-bases that may benefit the most from the proposed
 syntax, it was found that single arm matches would be used relatively often,
 mostly for various special-casing. In other languages this is supported in
-the form of one-off matches. We propose to support such one-off matches::
+the form of one-off matches. We propose to support such one-off matches too::
 
   if match value as pattern [and guard]:
       ...
@@ -413,8 +414,8 @@ as equivalent to the following expansion::
 
 There will be no ``elif match`` statements allowed. One-off match is special
 case of ``match`` statement, not a special case of an ``if`` statement.
-Similarly, ``if not match`` is not allowed, since ``match`` is not an
-expression.
+Similarly, ``if not match`` is not allowed, since ``match ... as ...`` is not
+an expression.
 
 To illustrate how this will benefit readability, consider this (slightly
 simplified) snippet from real code::
@@ -496,10 +497,10 @@ The method is then expected to either return ``NotImplemented`` which means
 the match failed or return a value for every ellipsis placeholder. The
 initial literal values passed in should not be included in the return, only
 the missing values. If star patterns were present it is expected to return
-corresponding values packed as tuple or and dict, and to return ``None``
-otherwise.
+corresponding values packed as a tuple and/or a dictionary, and to return
+``None`` otherwise.
 
-So in the example above a valid return would look like this::
+Thus in the example above a valid return would look like this::
 
   (1, 2), {"visible": False}, None, {"fast_render": False}
 
@@ -539,7 +540,7 @@ with more context, but there are various downsides to this, see
 Impossible matches
 -------------------
 
-The implementers of custom classes that implem a custom ``__match__()`` are
+Implementers of custom classes that implement a ``__match__()`` method are
 encouraged to "revert" the logic in the ``__init__()`` method rather than
 use the internal representation of the object state to fill the structured
 class pattern. This way, the match statements with such classes will have
@@ -579,7 +580,7 @@ builtins and standard library classes will follow these recommendations.
 Default ``object.__match__()``
 ------------------------------
 
-The default implementation is aimed at providing basic useful but still safe
+The default implementation is aimed at providing basic useful (but still safe)
 experience with pattern matching out of the box. For this purpose the match
 method follows this logic:
 
@@ -628,7 +629,7 @@ the match fails. If the key is not a literal, an arbitrary item is pulled from
 the dictionary iterator. If there is a length mismatch and no star item,
 the dictionary match always fails.
 
-An additional safety restriction is that if key pattern is a name, the value
+As an additional safety restriction, if key pattern is a name, the value
 pattern must also be a name. To illustrate the rules, consider an example::
 
   config = {"name": "default", "ttl": 3600}
@@ -648,14 +649,15 @@ pattern must also be a name. To illustrate the rules, consider an example::
       ...
 
 Note that sets and frozen sets are not supported because supporting them will
-be either ambiguous and tricky, see `rejected ideas`_.
+be either ambiguous or tricky, see `rejected ideas`_.
 
 Specification for standard library classes are not included in this PEP.
-Support for them can be added incrementally when necessary (i.e. the default
-``object.__match__()`` implementation doesn't provide reasonable support).
-Possible first candidate for a better ``__match__()`` method are named tuples.
+Support for them can be added incrementally when necessary (i.e. if the
+default ``object.__match__()`` implementation doesn't provide reasonable
+support). Possible first candidate for a better ``__match__()`` method are
+named tuples.
 
-Am attempt to use builtin classes in structured class patterns will cause
+An attempt to use builtin classes in structured class patterns will cause
 a ``TypeError`` with a suggestion to use a corresponding collection display.
 For example, one must use ``(x, y, z)`` instead of ``tuple(x, y, z)`` or
 ``tuple([x, y, z])``, and ``{"foo": x, "bar": y}`` instead of
@@ -666,13 +668,13 @@ Dataclasses
 -----------
 
 Dataclasses are special with respect to this PEP because they have a flexible
-auto-generated ``__init__()`` method. There we can generate a corresponding
-flexible ``__match__()`` method. It will provide the following improvements
-over the default ``object.__match__()``:
+auto-generated ``__init__()`` method. Therefore, we can generate a
+corresponding flexible ``__match__()`` method. It will provide the following
+improvements over the default ``object.__match__()``:
 
 * Positional match can be used even if ``__iter__()`` and ``__getitem__()``
   are not defined in the class. We just pull the fields in the order they
-  are defined in the class (and superclasses).
+  are defined in the class (and superclasses) to match ``__init__()``.
 
 * Positional and named matches can be combined. However, a positional and
   a named match must not target the same dataclass field. This will trigger
@@ -682,9 +684,9 @@ over the default ``object.__match__()``:
   must be matched, so all of ``Point3D(x, y)``, ``Point3D(x=x, y=y)``, and
   ``Point3D(x, y=y)`` will raise ``ImpossibleMatchError``.
 
-* To get a (less safe) partial match mimicking those in ``object.__match__()``
-  one can still use star items, e.g. ``Point3D(0, *other)``, and
-  ``Point3D(x=0, **other)`` work.
+* To get a (less safe) partial match by name mimicking that in
+  ``object.__match__()``  one can still use star items, e.g.
+  ``Point3D(0, *other)``, and ``Point3D(x=0, **other)`` work.
 
 * Fields with ``init=False`` (see [5]_) cannot be matched by position, but can
   still be matched by name. This deviates from the general logic that pattern
@@ -704,17 +706,17 @@ PEP 484 specifies that static type checkers should support exhaustiveness in
 conditional checks with respect to enum values. PEP 586 later generalized this
 requirement to literal types. This PEP further generalizes this requirement to
 arbitrary patterns. A typical situation where this applies is matching an
-expression a union type::
+expression with a union type::
 
   def classify(val: Union[int, Tuple[int, int], List[int]]) -> str:
       match val:
       as [x, *other]:
           return f"A list starting with {x}"
-      as (x, y):
+      as (x, y) if x > 0 and y > 0:
           return f"A pair of {x} and {y}"
       as int(...):
           return f"Some integer"
-      # Type-checking error: a list of zero elements unhandled.
+      # Type-checking error: some cases unhandled.
 
 The exhaustiveness checks should also apply where both pattern matching
 and enum values are combined::
@@ -832,7 +834,7 @@ Note that the above snippet actually fails at runtime with the current
 implementation of generic classes in ``typing`` module, and builtin generic
 classes in recently accepted and PEP 585.
 
-To clarify, in general generic classes are not prohibited from participating
+To clarify, generic classes are not prohibited in general from participating
 in pattern matching, just that their type parameters can't be explicitly
 specified. It is still fine if sub-patterns or literals bind the type
 variables. For example::
@@ -861,7 +863,7 @@ The fact that name pattern is always an assignment target may create unwanted
 consequences when a user by mistake tries to "match" a value against
 a constant. As a result, at runtime such match will always succeed and
 moreover override the value of the constant. It is important therefore that
-static type checkers. For example::
+static type checkers warn about such situations. For example::
 
   from typing import Final
 
@@ -948,7 +950,7 @@ adding ``isinstance()`` and ``getattr()`` to iterable unpacking. Also, we
 believe the proposed syntax significantly improves readability for a wide
 range of code patterns, by allowing to express *what* one wants to do, rather
 than *how* to do it. We hope few real code snippets we included in the PEP
-illustrate this comparison well enough.
+above illustrate this comparison well enough.
 
 Here are some other snippets from CPython repository that may potentially
 benefit from pattern matching::
@@ -995,7 +997,7 @@ Split dataclasses and typing parts into separate PEPs
 -----------------------------------------------------
 
 There was an option to make three separate PEPs: one for the syntax, one for
-the dataclasses improvements, and for fot static typing. We propose to have
+the dataclasses improvements, and one for static typing. We propose to have
 one larger PEP instead of three separate, because this is a major change to
 Python and such changes should apply coherently to various aspects of
 the language.
@@ -1045,7 +1047,7 @@ syntax highlighters, we decided not to use hard keyword for several reasons:
   may not even benefit from the new syntax.
 
 * It is hard to find an alternative keyword that would not be commonly used
-  in existing programs as an identifier, and would stilll clearly reflect the
+  in existing programs as an identifier, and would still clearly reflect the
   meaning of the statement.
 
 
@@ -1056,7 +1058,7 @@ There are three arguments in favour of using ``as`` as a keyword to start each
 match arm:
 
 * It is a bit shorter so will save some keystrokes and horizontal space, which
-  mat be important since this keyword will be repeated many times.
+  may be important since this keyword will be repeated many times.
 
 * Use of ``case`` is often associated with ``switch``, while using ``as`` is
   closer to plain English formulation of the concept.
@@ -1101,16 +1103,16 @@ Although some real code shows this can indeed be useful, we decided not to
 include these in the present PEP for several reasons:
 
 * This will significantly complicate the specification and implementation. In
-  particular interaction with name pattern may be non-trivial.
+  particular interaction with name patterns may be non-trivial.
 
-* In real life, top-level alternative matches would be often split over
-  multiple lines anyway. So this would look essentially not different from
-  having multiple arms.
+* Top-level alternative matches would be often split over multiple lines
+  anyway. So this would look essentially not different from having multiple
+  arms.
 
 * Nested alternative matches and negative matches will be likely not needed
   often, and may be added in future if requested by users.
 
-* This can be sometimes expressed using guards and or nested match statements
+* This can be sometimes expressed using guards and/or nested match statements.
 
 
 Support constant pattern
@@ -1177,8 +1179,8 @@ with name patterns. Four other alternatives were considered:
     as $BAR:
         ...  # This would be matched
 
-  But the name patterns are much more common in typical code, so having
-  special syntax for common case would be weird.
+  But the name patterns are more common in typical code, so having special
+  syntax for common case would be weird.
 
 After all, these alternatives were rejected because of mentioned drawbacks.
 Note that many use cases for constant matches can be remedied with guards. For
@@ -1219,7 +1221,7 @@ There was an alternative to allow falling through all match arms without
 a match. It was decided not to allow this, and by default raise an
 ``UnmatchedValue`` exception. There are few reasons:
 
-* This can cause subtle bugs. In view this it is preferable that the safer
+* This can cause subtle bugs. In view of this it is preferable that the safer
   option is the default one.
 
 * It is always easy to add an ``else`` match arm.
@@ -1231,7 +1233,8 @@ a match. It was decided not to allow this, and by default raise an
 Allow ``elif match`` and other one-offs
 ---------------------------------------
 
-There was to allow multi-branch one-off matches of the following form::
+There was an idea to allow multi-branch one-off matches of the following
+form::
 
   if match value_1 as patter_1 [and guard_1]:
       ...
@@ -1246,7 +1249,7 @@ It was decided not to this. Mainly because these defeats the purpose of
 one-off matches as a complement to exhaustive full matches. Similarly, we
 don't propose ``while match`` construct present in some languages with pattern
 matching, since although it may be handy, it will likely be used rarely.
-Finally, this is easy to add later.
+Finally, ``while match`` is easy to add later.
 
 
 Send full patterns to the ``__match__()`` method
@@ -1266,18 +1269,19 @@ For example the below match would generate the following call::
   BinaryOp.__match__(
       (),
       {
-          "left": PatternObject(Number, (), {"value": x}, -1, False),
+          "left": PatternObject(Number, (), {"value": ...}, -1, False),
           "op": ...,
-          "right": PatternObject(Number, (), {"value": y}, -1, False),
+          "right": PatternObject(Number, (), {"value": ...}, -1, False),
       },
       -1,
       False,
   )
 
-This would allow faster ``__match__()`` implementations and better support
-customization in custom classes. There is however a big downside to this: it
-will make basic implementation of this method really tedious. Also there will
-be actual performance penalty if user does not treat pattern object properly.
+This would allow faster ``__match__()`` implementations and will give better
+support for customization in user-defined classes. There is however a big
+downside to this: it will make basic implementation of this method quite
+tedious. Also, there will be actual performance penalty if user does not treat
+pattern object properly.
 
 
 Support matches for ``set`` and ``frozenset``
@@ -1287,15 +1291,16 @@ There was an idea to add support for set literal patterns, and ``frozenset``
 patterns (mostly for completeness). We don't do this because there are two
 complications that arise:
 
-* First of all, sets are unordered, so it is hard do define any deterministic
-  semantics.
+* First of all, sets are unordered, so it is hard do define any useful
+  deterministic semantics.
 
-* Second, supporting ``frozenset`` is even more ambiguous and will be used very
-  rarely. Namely, in addition to the general ordering issue, there are three
-  possible forms to support ``frozenset([x, y, z])`` vs ``frozenset({x, y, z})``
-  vs ``frozenset(x, y, z)``.
+* Second, supporting ``frozenset`` is even more ambiguous and will be used
+  very rarely. Namely, in addition to the general ordering issue, there are
+  three possible forms to support it: ``frozenset([x, y, z])`` vs
+  ``frozenset({x, y, z})`` vs ``frozenset(x, y, z)``.
 
-We can reconsider later if people will actually ask about supporting this.
+We can reconsider this later if people will actually ask about supporting
+set patterns.
 
 
 References
