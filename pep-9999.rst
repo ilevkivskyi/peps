@@ -205,7 +205,7 @@ Allowed patterns
 We introduce the proposed syntax gradually. Here we start from the main
 building blocks. The following patterns are supported:
 
-* Literal pattern, i.e. a simple literal like a string, a number, boolean,
+* **Literal pattern**, i.e. a simple literal like a string, a number, boolean,
   or ``None``::
 
     match number:
@@ -220,7 +220,7 @@ building blocks. The following patterns are supported:
   in the above example ``number == 1`` and then possibly ``number == 2`` will
   be evaluated.
 
-* Name pattern, that serves as an assignment target for the matched
+* **Name pattern**, that serves as an assignment target for the matched
   expression::
 
     match greeting:
@@ -235,7 +235,7 @@ building blocks. The following patterns are supported:
   the above snippet may raise ``UnboundLocalError`` rather than ``NameError``,
   if the ``None`` match arm was taken.
 
-* Display pattern is a generalization of iterable unpacking and supports
+* **Display pattern** is a generalization of iterable unpacking and supports
   builtin collections: tuples, lists, and dictionaries. Each element
   can be an arbitrary pattern plus there may be at most one ``*name`` or
   ``**name`` pattern to catch all remaining items::
@@ -256,7 +256,7 @@ building blocks. The following patterns are supported:
   and literal pattern are allowed in the key position, and the ``**other`` item
   must always be last, see details in the `runtime`_ section.
 
-* Unstructured class pattern is a synonym for an ``isinstance()`` check, it is
+* **Unstructured class pattern** is a synonym for an ``isinstance()`` check, it is
   mostly useful in nested positions, when the content of the object is not
   important and it serves just as a marker. For example::
 
@@ -264,7 +264,7 @@ building blocks. The following patterns are supported:
     as [Point(...), second, third, *other]:
         print(f"The first one is some point, then {second} and {third}")
 
-* Structured class pattern supports two possible ways of matching: by position
+* **Structured class pattern** supports two possible ways of matching: by position
   like ``Point(x, y)``, and by name like ``User(id=id, name=name)``. These two
   can be combined, but positional match cannot follow a match by name. Each
   item in a class match can be an arbitrary pattern, plus at most one ``*name``
