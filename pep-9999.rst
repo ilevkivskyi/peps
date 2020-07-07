@@ -35,7 +35,7 @@ Rationale and Goals
 Let us start from some anecdotal evidence: ``isinstance()`` is one of the most
 called functions in large scale Python code-bases (by static call count).
 In particular, when analyzing some multi-million line production code base,
-it was discovered that ``isinstance()`` is the second mast called builtin
+it was discovered that ``isinstance()`` is the second most called builtin
 function (after ``len()``). Even taking into account builtin classes, it is
 still in the top ten. Most of such calls are followed by specific attribute
 access.
